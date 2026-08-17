@@ -3,6 +3,9 @@ dist/
 .netlify/
 .vite/
 
+# Local dev store standing in for Netlify Blobs
+data/.local-store/
+
 # Never commit the access key
 .env
 .env.local

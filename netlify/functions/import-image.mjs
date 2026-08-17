@@ -1,19 +1,22 @@
 import seed from '../../data/orders.json'
-import { errorResponse, handleOrders } from '../../server/handlers.mjs'
-import { json, readIfMatch, rejectUnauthorised } from '../../server/http.mjs'
+import { errorResponse, handleImport } from '../../server/handlers.mjs'
+import { json, rejectUnauthorised } from '../../server/http.mjs'
 import { createBlobStore } from '../../server/store-blobs.mjs'
 
 export default async (req) => {
   const rejected = rejectUnauthorised(req)
   if (rejected) return rejected
 
+  if (req.method !== 'POST') {
+    return json({ error: 'Use POST' }, 405)
+  }
+
   try {
-    const result = await handleOrders({
+    const result = await handleImport({
       store: createBlobStore(),
       seed,
-      method: req.method,
-      ifMatch: readIfMatch(req),
-      body: req.method === 'PUT' ? await req.json().catch(() => null) : undefined,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      body: await req.json().catch(() => null),
     })
     return json(result.body, result.status)
   } catch (err) {
@@ -22,4 +25,4 @@ export default async (req) => {
   }
 }
 
-export const config = { path: '/api/orders' }
+export const config = { path: '/api/import-image' }

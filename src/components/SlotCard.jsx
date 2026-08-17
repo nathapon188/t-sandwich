@@ -1,9 +1,10 @@
 import { money, slotLines, slotTotals } from '../lib/orders'
 
-export default function SlotCard({ data, dateKey, slot, hideZero }) {
+export default function SlotCard({ data, dateKey, slot, hideZero, editing, onQty }) {
   const lines = slotLines(data, dateKey, slot.id)
   const totals = slotTotals(data, dateKey, slot.id)
-  const visible = hideZero ? lines.filter(l => l.full > 0) : lines
+  // Hiding zero rows while editing would hide the inputs you need.
+  const visible = hideZero && !editing ? lines.filter(l => l.full > 0) : lines
 
   return (
     <div className="card">
@@ -30,7 +31,21 @@ export default function SlotCard({ data, dateKey, slot, hideZero }) {
               className={`${line.full ? '' : 'zero'} ${line.item.gf ? 'gf' : ''}`}
             >
               <td>{line.item.name}</td>
-              <td className="qty">{line.full}</td>
+              <td className="qty">
+                {editing ? (
+                  <input
+                    className="qty-input"
+                    type="number"
+                    min="0"
+                    max="9999"
+                    step="1"
+                    value={line.full}
+                    aria-label={`${line.item.name}, ${slot.label}, full sandwiches`}
+                    onChange={e => onQty(slot.id, line.item.id, Number(e.target.value))}
+                    onFocus={e => e.target.select()}
+                  />
+                ) : line.full}
+              </td>
               <td className={line.half === null ? 'na' : 'qty'}>
                 {line.half === null ? '—' : line.half}
               </td>

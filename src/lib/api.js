@@ -19,20 +19,42 @@ export function keyFromUrl() {
   return key
 }
 
-export async function fetchOrders(key) {
+async function request(path, key, { method = 'GET', body, ifMatch } = {}) {
+  const headers = { 'x-wsh-key': key }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (ifMatch !== undefined) headers['If-Match'] = ifMatch === null ? 'null' : ifMatch
+
   let res
   try {
-    res = await fetch('/api/orders', { headers: { 'x-wsh-key': key } })
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
   } catch {
     throw Object.assign(new Error('Could not reach the server. Check your connection.'), { status: 0 })
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const payload = await res.json().catch(() => ({}))
     throw Object.assign(
-      new Error(body.error ?? `Request failed (${res.status})`),
+      new Error(payload.error ?? `Request failed (${res.status})`),
       { status: res.status },
     )
   }
   return res.json()
 }
+
+export const fetchOrders = key => request('/api/orders', key)
+
+export const saveOrders = (key, doc, ifMatch) =>
+  request('/api/orders', key, { method: 'PUT', body: doc, ifMatch })
+
+export const fetchSnapshots = key =>
+  request('/api/snapshots', key).then(payload => payload.snapshots ?? [])
+
+export const fetchSnapshot = (key, id) =>
+  request(`/api/snapshots?id=${encodeURIComponent(id)}`, key)
+
+export const importImage = (key, image) =>
+  request('/api/import-image', key, { method: 'POST', body: { image } })
