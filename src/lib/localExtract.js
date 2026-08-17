@@ -13,9 +13,10 @@ import { PSM, createWorker } from 'tesseract.js'
  * mapExtraction consumes either without knowing which produced it.
  */
 
-// Spreadsheet digits sit around 10px tall at native size, well under what
-// Tesseract reads reliably. Upscaling first is the largest accuracy win here.
-const SCALE = 3
+// Spreadsheet digits sit around 10px tall at native size, under what Tesseract
+// reads reliably. Doubling helps; tripling measurably hurts, recovering fewer
+// words than no upscale at all.
+const SCALE = 2
 const DARK_CELL = 60      // mean luminance below this reads as a blacked-out cell
 const LOW_CONFIDENCE = 70 // re-read anything Tesseract is less sure of than this
 
@@ -35,9 +36,16 @@ const normalise = text =>
 
 const strip = text => String(text ?? '').replace(/[,\s]/g, '')
 
-/** Numeric value of a price token, else null. Tolerates OCR reading $ as S. */
+/**
+ * Numeric value of a price token, else null. The currency mark has to have
+ * survived: "$0.00" is routinely read as "50.00" and "$6.50" as "56.50", and a
+ * wrong price raises a false unit-price mismatch on an otherwise correct row.
+ * Reporting no price is better, since the catalogue is the real source anyway.
+ */
 function priceOf(text) {
-  const clean = strip(text).replace(/^[sS$]/, '')
+  const raw = String(text ?? '')
+  if (!raw.includes('$')) return null
+  const clean = strip(raw).replace('$', '')
   return /^\d+\.\d{2}$/.test(clean) ? Number(clean) : null
 }
 
@@ -67,8 +75,9 @@ function toCanvas(dataUrl, scale) {
       canvas.width = Math.round(img.naturalWidth * scale)
       canvas.height = Math.round(img.naturalHeight * scale)
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      ctx.imageSmoothingEnabled = true
-      ctx.imageSmoothingQuality = 'high'
+      // Screenshot text is hard-edged. Interpolating it softens the strokes
+      // and costs recognised words, so scale by pixel duplication instead.
+      ctx.imageSmoothingEnabled = false
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       resolve(canvas)
     }
@@ -157,31 +166,47 @@ function findDayBands(rows, height) {
   const markers = []
 
   for (const row of rows) {
-    const text = row.words.map(word => word.text).join(' ')
-    const weekday = WEEKDAYS.find(day => new RegExp(`\\b${day}\\b`, 'i').test(text))
-    if (!weekday) continue
+    const texts = row.words.map(word => normalise(word.text))
+    const at = texts.findIndex(text => WEEKDAYS.some(day => text === day.toLowerCase()))
+    if (at < 0) continue
 
-    const closes = /total/i.test(text)
-    const last = markers[markers.length - 1]
-    if (last && last.weekday === weekday && last.closes === closes) continue
-    markers.push({ weekday, closes, y0: row.y0, y1: row.y1 })
+    // The word after the weekday decides which edge of the band this is.
+    // Looking for "total" anywhere in the row instead would misread the
+    // opening heading, "Saturday Order ... 8:00am Price total", as the
+    // closing one and collapse the whole day to an empty gap.
+    const kind = texts[at + 1] === 'order' ? 'opens' : texts[at + 1] === 'total' ? 'closes' : null
+    if (!kind) continue
+
+    markers.push({ weekday: WEEKDAYS[WEEKDAYS.findIndex(day => texts[at] === day.toLowerCase())], kind, y0: row.y0, y1: row.y1 })
   }
 
-  const opening = markers.filter(marker => !marker.closes)
-  if (opening.length > 0) {
-    return opening.map((marker, i) => ({
-      weekday: marker.weekday,
-      from: marker.y0,
-      to: i === opening.length - 1 ? height : opening[i + 1].y0,
-    }))
+  // Whether a given heading survives OCR depends on how it is drawn, so a
+  // sheet can yield an opening row for one day and only a closing row for
+  // another. Take each day from whichever markers it actually has.
+  markers.sort((a, b) => a.y0 - b.y0)
+
+  const order = []
+  const byDay = new Map()
+  for (const marker of markers) {
+    let entry = byDay.get(marker.weekday)
+    if (!entry) {
+      entry = { weekday: marker.weekday }
+      byDay.set(marker.weekday, entry)
+      order.push(entry)
+    }
+    entry[marker.kind] = entry[marker.kind] ?? marker
   }
 
-  const closing = markers.filter(marker => marker.closes)
-  return closing.map((marker, i) => ({
-    weekday: marker.weekday,
-    from: i === 0 ? 0 : closing[i - 1].y1,
-    to: marker.y0,
-  }))
+  const bands = []
+  let previousEnd = 0
+  for (let i = 0; i < order.length; i++) {
+    const entry = order[i]
+    const from = entry.opens ? entry.opens.y1 : previousEnd
+    const to = entry.closes ? entry.closes.y0 : order[i + 1]?.opens?.y0 ?? height
+    bands.push({ weekday: entry.weekday, from, to })
+    previousEnd = entry.closes ? entry.closes.y1 : to
+  }
+  return bands
 }
 
 /** Mean luminance of a canvas region, clamped to the canvas bounds. */
