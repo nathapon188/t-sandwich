@@ -289,7 +289,6 @@ export default function App() {
 
       {importOpen && !isMobile && (
         <ImportDialog
-          accessKey={accessKey}
           doc={doc}
           weekStart={weekOf(parseKey(selected))[0]}
           onApply={handleApplyImport}

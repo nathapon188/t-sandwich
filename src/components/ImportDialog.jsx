@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { importImage } from '../lib/api'
 import { imageFromPaste, prepareImage } from '../lib/image'
 import { mapExtraction } from '../lib/importMap'
+import { extractOrdersLocally } from '../lib/localExtract'
 import { auDate, dateKey, parseKey, weekOf } from '../lib/orders'
 
-export default function ImportDialog({ accessKey, doc, weekStart, onApply, onClose }) {
+export default function ImportDialog({ doc, weekStart, onApply, onClose }) {
   const [image, setImage] = useState(null)
   const [week, setWeek] = useState(() => dateKey(weekStart))
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
   const fileInput = useRef(null)
@@ -44,9 +45,13 @@ export default function ImportDialog({ accessKey, doc, weekStart, onApply, onClo
   const extract = async () => {
     if (!image) return
     setBusy(true)
+    setProgress(0)
     setError('')
     try {
-      const extraction = await importImage(accessKey, image.dataUrl)
+      const extraction = await extractOrdersLocally(image.dataUrl, {
+        catalogue: doc.catalogue,
+        onProgress: setProgress,
+      })
       // The sheet only names weekdays, so the chosen week decides the dates.
       setResult(mapExtraction(extraction, doc, weekOf(parseKey(week))[0]))
     } catch (err) {
@@ -67,8 +72,8 @@ export default function ImportDialog({ accessKey, doc, weekStart, onApply, onClo
         </div>
 
         <p className="gate-copy">
-          Paste a screenshot of the order spreadsheet (Ctrl+V) or choose a file. Claude reads
-          it and shows you the result to check before anything changes.
+          Paste a screenshot of the order spreadsheet (Ctrl+V) or choose a file. It is read
+          here in the browser and never uploaded. Check the result before anything changes.
         </p>
 
         <div
@@ -141,7 +146,7 @@ export default function ImportDialog({ accessKey, doc, weekStart, onApply, onClo
               </div>
             ))}
 
-            {result.notes && <p className="note"><strong>Claude's notes:</strong> {result.notes}</p>}
+            {result.notes && <p className="note"><strong>Reader notes:</strong> {result.notes}</p>}
 
             {result.issues.length > 0 && (
               <div className="issues">
@@ -160,7 +165,9 @@ export default function ImportDialog({ accessKey, doc, weekStart, onApply, onClo
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn" onClick={extract} disabled={!image || busy}>
-            {busy ? 'Reading image…' : result ? 'Read again' : 'Read image'}
+            {busy
+              ? `Reading image… ${Math.round(progress * 100)}%`
+              : result ? 'Read again' : 'Read image'}
           </button>
           <button
             className="btn btn-primary"

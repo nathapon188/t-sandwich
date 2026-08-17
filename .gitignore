@@ -6,6 +6,9 @@ dist/
 # Local dev store standing in for Netlify Blobs
 data/.local-store/
 
+# OCR language data, fetched on demand by scripts/try-local-read.mjs
+*.traineddata
+
 # Never commit the access key
 .env
 .env.local
