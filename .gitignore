@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.netlify/
+.vite/
+
+# Never commit the access key
+.env
+.env.local
+.env.*.local
+
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en-AU" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandwich Order Display</title>
+<style>
+  :root {
+    --bg:        #0c0c0d;
+    --card:      #171718;
+    --card-2:    #1e1e20;
+    --border:    #2a2a2d;
+    --text:      #e9e7e4;
+    --muted:     #9b9894;
+    --faint:     #6a6764;
+    --accent:    #e8846b;
+    --accent-dim:#3a2320;
+    --green:     #6bbf8a;
+    --blue:      #7aa7e8;
+    --radius:    14px;
+  }
+  html[data-theme="light"] {
+    --bg:        #f4f2ef;
+    --card:      #ffffff;
+    --card-2:    #f7f5f2;
+    --border:    #e2ded8;
+    --text:      #1c1b1a;
+    --muted:     #6b6763;
+    --faint:     #9b9894;
+    --accent:    #c25a3d;
+    --accent-dim:#f7e6e0;
+    --green:     #3f8b5d;
+    --blue:      #3f6bb0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 1400px; margin: 0 auto 20px;
+  }
+  .topbar h1 { font-size: 20px; margin: 0; font-weight: 600; letter-spacing: -0.2px; }
+  .topbar .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    cursor: pointer; font-size: 16px; display: grid; place-items: center;
+  }
+  .icon-btn:hover { background: var(--card-2); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+    gap: 18px;
+    max-width: 1400px; margin: 0 auto;
+    align-items: start;
+  }
+  .col { display: grid; gap: 18px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .card h2 {
+    font-size: 15px; margin: 0 0 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  /* ---------- Calendar ---------- */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .cal-head .month { font-weight: 600; font-size: 15px; }
+  .nav { display: flex; gap: 6px; }
+  .nav button {
+    width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+    background: var(--card-2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .nav button:hover { color: var(--text); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-grid .dow {
+    text-align: center; font-size: 11px; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 6px;
+  }
+  .day {
+    position: relative; aspect-ratio: 1 / 1; border-radius: 9px;
+    border: 1px solid transparent; background: transparent; color: var(--text);
+    font-size: 13px; cursor: pointer; display: grid; place-items: center;
+  }
+  .day:hover { background: var(--card-2); }
+  .day.out { color: var(--faint); opacity: .45; }
+  .day.today { border-color: var(--border); font-weight: 600; }
+  .day.has-order::after {
+    content: ""; position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+    width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  }
+  .day.selected {
+    background: var(--accent-dim); border-color: var(--accent); color: var(--text); font-weight: 600;
+  }
+  .day.selected.has-order::after { background: var(--accent); }
+  .legend { margin-top: 14px; display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; }
+
+  /* ---------- Week summary ---------- */
+  .kv { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; }
+  .kv + .kv { border-top: 1px solid var(--border); }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-weight: 600; }
+  .kv.clickable { cursor: pointer; }
+  .kv.clickable:hover .k { color: var(--text); }
+  .kv.active .k { color: var(--accent); }
+
+  /* ---------- Detail header ---------- */
+  .detail-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .detail-head .date { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .detail-head .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .stats { display: flex; gap: 26px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--faint); }
+  .stat .value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .stat .value.total { color: var(--accent); }
+
+  /* ---------- Order tables ---------- */
+  .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; }
+  .slot-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-dim); color: var(--accent); border: 1px solid var(--border);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th {
+    text-align: right; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--faint); font-weight: 500; padding: 0 0 8px; border-bottom: 1px solid var(--border);
+  }
+  th:first-child, td:first-child { text-align: left; }
+  td { padding: 7px 0; text-align: right; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr.zero td { color: var(--faint); }
+  tr.gf td:first-child { color: var(--blue); }
+  tr.zero.gf td:first-child { color: var(--faint); }
+  td.qty { font-variant-numeric: tabular-nums; }
+  td.na { color: var(--faint); }
+  td.price { font-variant-numeric: tabular-nums; font-weight: 600; }
+  tr.zero td.price { font-weight: 400; }
+  tfoot td { border-top: 1px solid var(--border); border-bottom: none; padding-top: 10px; font-weight: 600; }
+  tfoot td:first-child { color: var(--muted); font-weight: 500; }
+
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0 4px; }
+  .empty strong { color: var(--text); display: block; margin-bottom: 4px; font-weight: 600; }
+
+  .toolbar { display: flex; gap: 16px; align-items: center; font-size: 13px; color: var(--muted); }
+  .toolbar label { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+  .btn {
+    background: var(--card-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 9px; padding: 7px 13px; font-size: 13px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .note { font-size: 12px; color: var(--faint); line-height: 1.6; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .slots { grid-template-columns: 1fr; }
+  }
+  @media print {
+    body { background: #fff; color: #000; padding: 0; }
+    .icon-btn, .nav, .toolbar, .no-print { display: none !important; }
+    .card { border-color: #ccc; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>Sandwich Order Display</h1>
+    <div class="sub" id="weekLabel"></div>
+  </div>
+  <button class="icon-btn" id="themeBtn" title="Toggle theme">☀</button>
+</div>
+
+<div class="layout">
+  <!-- LEFT: calendar + week summary -->
+  <div class="col">
+    <div class="card">
+      <div class="cal-head">
+        <div class="month" id="monthLabel"></div>
+        <div class="nav">
+          <button id="prevBtn" title="Previous month">‹</button>
+          <button id="todayBtn" title="Today" style="width:auto;padding:0 10px;">Today</button>
+          <button id="nextBtn" title="Next month">›</button>
+        </div>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+      <div class="legend">
+        <span><i></i> Order placed</span>
+        <span style="color:var(--faint)">Click a day to view</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot"></span> Week Summary</h2>
+      <div id="weekSummary"></div>
+    </div>
+
+    <div class="card no-print">
+      <h2>Price List</h2>
+      <div id="priceList"></div>
+      <p class="note" style="margin-bottom:0">
+        Prices are per full sandwich. One full sandwich = 2 halves.
+      </p>
+    </div>
+  </div>
+
+  <!-- RIGHT: day detail -->
+  <div class="col">
+    <div class="card">
+      <div class="detail-head">
+        <div>
+          <div class="date" id="detailDate"></div>
+          <div class="meta" id="detailMeta"></div>
+        </div>
+        <div class="stats" id="detailStats"></div>
+      </div>
+    </div>
+
+    <div class="slots" id="slots"></div>
+
+    <div class="card no-print">
+      <div class="toolbar">
+        <label><input type="checkbox" id="hideZero"> Hide zero-quantity items</label>
+        <button class="btn" id="printBtn">Print day sheet</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   DATA  —  edit this block to update orders
+   ========================================================================= */
+
+// Price is per FULL sandwich. A full sandwich is cut into 2 halves.
+const CATALOGUE = [
+  { id: 'fruit',      name: 'Dairy Free Fruit cups',            price: 0.00, halves: false },
+  { id: 'ham',        name: 'Ham and Cheese',                   price: 7.00 },
+  { id: 'chicken',    name: 'Chicken and Lettuce',              price: 7.50 },
+  { id: 'veg',        name: 'Vegetarian',                       price: 6.50 },
+  { id: 'gfham',      name: 'Gluten-free Ham and Cheese',       price: 8.00, gf: true },
+  { id: 'gfchicken',  name: 'Gluten-free Chicken and Lettuce',  price: 8.00, gf: true },
+  { id: 'gfveg',      name: 'Gluten-free Vegetarian',           price: 7.50, gf: true },
+];
+
+const SLOTS = [
+  { id: '08:00', label: '8:00am Collection' },
+  { id: '10:30', label: '10:30am Collection' },
+];
+
+// Quantities are FULL sandwiches. Halves are derived (full x 2).
+// Key = date in YYYY-MM-DD.
+const ORDERS = {
+  '2026-08-17': { // Monday
+    '08:00': { ham: 4, chicken: 6, veg: 3, gfchicken: 1 },
+    '10:30': { ham: 5, chicken: 7 },
+  },
+  '2026-08-18': { // Tuesday
+    '08:00': { fruit: 1, ham: 5, chicken: 7, veg: 3 },
+    '10:30': { ham: 5, chicken: 7 },
+  },
+  '2026-08-19': { // Wednesday
+    '08:00': { ham: 5, chicken: 7, veg: 3, gfchicken: 1 },
+    '10:30': { ham: 5, chicken: 6, veg: 1 },
+  },
+};
+
+/* =========================================================================
+   LOGIC
+   ========================================================================= */
+
+const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const MONTHS = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+
+const money = n => '$' + n.toFixed(2);
+const key = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')
+                 + '-' + String(d.getDate()).padStart(2,'0');
+const parseKey = k => { const [y,m,d] = k.split('-').map(Number); return new Date(y, m-1, d); };
+const auDate = d => String(d.getDate()).padStart(2,'0') + '/' +
+                    String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();
+
+const today = new Date(); today.setHours(0,0,0,0);
+let viewMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+let selected  = ORDERS[key(today)] ? key(today) : (Object.keys(ORDERS).sort()[0] || key(today));
+let hideZero  = false;
+
+function item(id) { return CATALOGUE.find(c => c.id === id); }
+
+// Returns [{item, full, half, price}] for a slot on a date.
+function slotLines(dateKey, slotId) {
+  const qty = (ORDERS[dateKey] || {})[slotId] || {};
+  return CATALOGUE.map(c => {
+    const full = qty[c.id] || 0;
+    return {
+      item: c,
+      full,
+      half: c.halves === false ? null : full * 2,
+      price: full * c.price,
+    };
+  });
+}
+
+function slotTotals(dateKey, slotId) {
+  const lines = slotLines(dateKey, slotId);
+  return {
+    full:  lines.reduce((s,l) => s + l.full, 0),
+    half:  lines.reduce((s,l) => s + (l.half || 0), 0),
+    price: lines.reduce((s,l) => s + l.price, 0),
+  };
+}
+
+function dayTotals(dateKey) {
+  return SLOTS.reduce((acc, s) => {
+    const t = slotTotals(dateKey, s.id);
+    acc.full += t.full; acc.half += t.half; acc.price += t.price;
+    return acc;
+  }, { full: 0, half: 0, price: 0 });
+}
+
+function hasOrder(dateKey) {
+  const day = ORDERS[dateKey];
+  if (!day) return false;
+  return SLOTS.some(s => Object.values(day[s.id] || {}).some(v => v > 0));
+}
+
+// Monday-start week containing the given date.
+function weekOf(date) {
+  const start = new Date(date);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  return Array.from({length: 7}, (_, i) => {
+    const d = new Date(start); d.setDate(start.getDate() + i); return d;
+  });
+}
+
+/* ---------------- Renderers ---------------- */
+
+function renderCalendar() {
+  document.getElementById('monthLabel').textContent =
+    MONTHS[viewMonth.getMonth()] + ' ' + viewMonth.getFullYear();
+
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = DOW.map(d => `<div class="dow">${d}</div>`).join('');
+
+  const first = new Date(viewMonth);
+  const lead = (first.getDay() + 6) % 7;              // Monday-start offset
+  const cursor = new Date(first);
+  cursor.setDate(1 - lead);
+
+  for (let i = 0; i < 42; i++) {
+    const k = key(cursor);
+    const cls = ['day'];
+    if (cursor.getMonth() !== viewMonth.getMonth()) cls.push('out');
+    if (k === key(today)) cls.push('today');
+    if (hasOrder(k)) cls.push('has-order');
+    if (k === selected) cls.push('selected');
+
+    const btn = document.createElement('button');
+    btn.className = cls.join(' ');
+    btn.textContent = cursor.getDate();
+    btn.dataset.date = k;
+    btn.title = hasOrder(k) ? auDate(cursor) + ' — ' + money(dayTotals(k).price) : auDate(cursor);
+    btn.onclick = () => { selected = btn.dataset.date; renderAll(); };
+    grid.appendChild(btn);
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+}
+
+function renderWeekSummary() {
+  const week = weekOf(parseKey(selected));
+  const rows = week.filter(d => hasOrder(key(d)));
+  const el = document.getElementById('weekSummary');
+
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">No orders recorded for this week.</div>';
+  } else {
+    let total = 0;
+    el.innerHTML = rows.map(d => {
+      const k = key(d), t = dayTotals(k);
+      total += t.price;
+      return `<div class="kv clickable ${k === selected ? 'active' : ''}" data-date="${k}">
+                <span class="k">${DOW[(d.getDay()+6)%7]} ${auDate(d)}</span>
+                <span class="v">${money(t.price)}</span>
+              </div>`;
+    }).join('') +
+    `<div class="kv" style="border-top:1px solid var(--border);margin-top:4px">
+       <span class="k">Week total</span>
+       <span class="v" style="color:var(--accent)">${money(total)}</span>
+     </div>`;
+
+    el.querySelectorAll('.clickable').forEach(r => {
+      r.onclick = () => {
+        selected = r.dataset.date;
+        const d = parseKey(selected);
+        viewMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+        renderAll();
+      };
+    });
+  }
+
+  document.getElementById('weekLabel').textContent =
+    'Week of ' + auDate(week[0]) + ' – ' + auDate(week[6]);
+}
+
+function renderPriceList() {
+  document.getElementById('priceList').innerHTML = CATALOGUE.map(c =>
+    `<div class="kv">
+       <span class="k" ${c.gf ? 'style="color:var(--blue)"' : ''}>${c.name}</span>
+       <span class="v">${c.price ? money(c.price) : '—'}</span>
+     </div>`).join('');
+}
+
+function renderDetail() {
+  const d = parseKey(selected);
+  const t = dayTotals(selected);
+  const ordered = hasOrder(selected);
+
+  const DOW_FULL = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  document.getElementById('detailDate').textContent =
+    DOW_FULL[(d.getDay()+6)%7] + ' ' + auDate(d);
+
+  document.getElementById('detailMeta').textContent = ordered
+    ? SLOTS.length + ' collection times · ' + CATALOGUE.length + ' line items'
+    : 'No order recorded for this day';
+
+  document.getElementById('detailStats').innerHTML = `
+    <div class="stat"><div class="label">Full</div><div class="value">${t.full}</div></div>
+    <div class="stat"><div class="label">Halves</div><div class="value">${t.half}</div></div>
+    <div class="stat"><div class="label">Day total</div><div class="value total">${money(t.price)}</div></div>`;
+
+  const slots = document.getElementById('slots');
+
+  if (!ordered) {
+    slots.innerHTML = `<div class="card"><div class="empty">
+        <strong>Nothing scheduled</strong>
+        Pick a highlighted day on the calendar to see its order breakdown.
+      </div></div>`;
+    return;
+  }
+
+  slots.innerHTML = SLOTS.map(s => {
+    const lines = slotLines(selected, s.id);
+    const st = slotTotals(selected, s.id);
+    const visible = hideZero ? lines.filter(l => l.full > 0) : lines;
+
+    const body = visible.length ? visible.map(l => `
+      <tr class="${l.full ? '' : 'zero'} ${l.item.gf ? 'gf' : ''}">
+        <td>${l.item.name}</td>
+        <td class="qty">${l.full}</td>
+        <td class="${l.half === null ? 'na' : 'qty'}">${l.half === null ? '—' : l.half}</td>
+        <td class="price">${money(l.price)}</td>
+      </tr>`).join('')
+      : `<tr><td colspan="4" style="color:var(--faint);padding:12px 0">No items in this collection.</td></tr>`;
+
+    return `<div class="card">
+      <div class="slot-head">
+        <h2 style="margin:0"><span class="dot"></span> ${s.label}</h2>
+        <span class="pill">${money(st.price)}</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Item</th><th>Full</th><th>Half</th><th>Price</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr>
+          <td>Collection total</td>
+          <td class="qty">${st.full}</td>
+          <td class="qty">${st.half}</td>
+          <td class="price" style="color:var(--accent)">${money(st.price)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+function renderAll() {
+  renderCalendar();
+  renderWeekSummary();
+  renderDetail();
+}
+
+/* ---------------- Controls ---------------- */
+
+document.getElementById('prevBtn').onclick = () => {
+  viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderCalendar();
+};
+document.getElementById('nextBtn').onclick = () => {
+  viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderCalendar();
+};
+document.getElementById('todayBtn').onclick = () => {
+  viewMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  selected = key(today); renderAll();
+};
+document.getElementById('hideZero').onchange = e => { hideZero = e.target.checked; renderDetail(); };
+document.getElementById('printBtn').onclick = () => window.print();
+document.getElementById('themeBtn').onclick = () => {
+  const root = document.documentElement;
+  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  root.dataset.theme = next;
+  document.getElementById('themeBtn').textContent = next === 'dark' ? '☀' : '☾';
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const d = parseKey(selected);
+  d.setDate(d.getDate() + (e.key === 'ArrowRight' ? 1 : -1));
+  selected = key(d);
+  viewMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  renderAll();
+});
+
+renderPriceList();
+renderAll();
+</script>
+</body>
+</html>

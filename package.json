@@ -1,0 +1,21 @@
+{
+  "name": "t-sandwich",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sandwich order display system with calendar and per-collection breakdown",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dev:netlify": "netlify dev"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.11"
+  }
+}
