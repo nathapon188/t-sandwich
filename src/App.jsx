@@ -235,9 +235,19 @@ export default function App() {
           <h1>Sandwich Order Display</h1>
           <div className="sub">{weekLabel}</div>
         </div>
-        <button className="icon-btn" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
-          {theme === 'dark' ? '☀' : '☾'}
-        </button>
+        <div className="topbar-actions">
+          <button
+            className="icon-btn"
+            onClick={() => { window.location.href = 'https://tbooking.netlify.app' }}
+            title="Go to tbooking.netlify.app"
+            aria-label="Go to tbooking.netlify.app"
+          >
+            ↳
+          </button>
+          <button className="icon-btn" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
+        </div>
       </div>
 
       <div className="layout">
