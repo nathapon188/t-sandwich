@@ -32,6 +32,40 @@ function useTheme() {
   return [theme, () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))]
 }
 
+function ReservationIcon() {
+  return (
+    <svg
+      className="icon-svg"
+      viewBox="0 0 24 24"
+      width="21"
+      height="21"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <mask id="reservation-icon-cut">
+        <rect width="24" height="24" fill="#fff" stroke="none" />
+        <circle cx="17.4" cy="16.6" r="6.3" fill="#000" stroke="none" />
+      </mask>
+      <g mask="url(#reservation-icon-cut)">
+        <path d="M5.6 4.7V3.2a1.6 1.6 0 0 1 3.2 0v1.5" />
+        <path d="M11.6 4.7V3.2a1.6 1.6 0 0 1 3.2 0v1.5" />
+        <rect x="2.2" y="4.7" width="15.6" height="15.1" rx="2" />
+        <rect x="4.7" y="9.1" width="2.6" height="2.4" rx="0.5" />
+        <rect x="8.7" y="9.1" width="2.6" height="2.4" rx="0.5" />
+        <rect x="12.7" y="9.1" width="2.6" height="2.4" rx="0.5" />
+        <rect x="4.7" y="13.5" width="2.6" height="2.4" rx="0.5" />
+        <rect x="8.7" y="13.5" width="2.6" height="2.4" rx="0.5" />
+      </g>
+      <circle cx="17.4" cy="16.6" r="5.2" />
+      <path d="M15.1 16.7l1.8 1.8 3.2-3.7" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [theme, toggleTheme] = useTheme()
   const isMobile = useMediaQuery(MOBILE_QUERY)
@@ -242,7 +276,7 @@ export default function App() {
             title="Go to tbooking.netlify.app"
             aria-label="Go to tbooking.netlify.app"
           >
-            ↳
+            <ReservationIcon />
           </button>
           <button className="icon-btn" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
             {theme === 'dark' ? '☀' : '☾'}

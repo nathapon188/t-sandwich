@@ -63,6 +63,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .icon-btn:hover { background: var(--card-2); }
 .icon-btn.small { width: 30px; height: 30px; font-size: 13px; }
+.icon-btn .icon-svg { display: block; }
 
 /* ---------- Layout ---------- */
 .layout {
