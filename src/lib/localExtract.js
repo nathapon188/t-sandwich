@@ -16,10 +16,10 @@ import { PSM, createWorker } from 'tesseract.js'
 // Spreadsheet digits sit around 10px tall at native size, well under what
 // Tesseract reads reliably, and a lone small digit is the hardest case of all.
 // Measured on a 1355x335 sheet: pixel duplication at 2x recovered 2 of ~56
-// quantities and 1 price, and at 4x still only 2; smooth interpolation at 4x
-// recovered 17 quantities and 30 prices. Hard-edged strokes were the reason to
-// duplicate pixels, but at this size the interpolated glyph is the readable
-// one. MAX_PIXELS keeps a full-page screenshot inside what a canvas will hold.
+// quantities and 1 price, and at 4x still only 2, against 17 and 30 for a
+// bicubic 4x. Hard-edged strokes were the reason to duplicate pixels, but at
+// this size the interpolated glyph is the readable one — see cubicWeights.
+// MAX_PIXELS keeps a full-page screenshot inside what a canvas will hold.
 const SCALE = 4
 const MAX_PIXELS = 40e6
 const DARK_CELL = 60      // mean luminance below this reads as a blacked-out cell
@@ -71,6 +71,75 @@ function timeValue(text) {
   return hours * 60 + Number(match[2])
 }
 
+/**
+ * Catmull-Rom weights, the cubic used for the upscale.
+ *
+ * Which resampler does the enlarging decides how much of the sheet is legible
+ * at all, and drawImage's own smoothing is not good enough: measured against
+ * this cubic on one sheet, the browser's 4x recovered 14 quantities and no
+ * prices where the cubic recovered 17 and 30. Nor is it the same filter in
+ * every browser, so the sheet that imports on one machine would fail on the
+ * next. Resampling here costs a pass over the pixels and takes that away.
+ */
+function cubicWeights(t) {
+  const t2 = t * t
+  const t3 = t2 * t
+  return [
+    -0.5 * t3 + t2 - 0.5 * t,
+    1.5 * t3 - 2.5 * t2 + 1,
+    -1.5 * t3 + 2 * t2 + 0.5 * t,
+    0.5 * t3 - 0.5 * t2,
+  ]
+}
+
+/** Bicubic resample of one ImageData, as two separable passes. */
+function upscale(source, width, height) {
+  const clampX = x => Math.min(source.width - 1, Math.max(0, x))
+  const clampY = y => Math.min(source.height - 1, Math.max(0, y))
+
+  // Horizontal pass into a float buffer, so the vertical pass reads unrounded
+  // values and the two roundings do not compound.
+  const wide = new Float32Array(width * source.height * 4)
+  const xScale = source.width / width
+
+  for (let x = 0; x < width; x++) {
+    const at = (x + 0.5) * xScale - 0.5
+    const base = Math.floor(at)
+    const weights = cubicWeights(at - base)
+
+    for (let y = 0; y < source.height; y++) {
+      for (let channel = 0; channel < 4; channel++) {
+        let sum = 0
+        for (let k = 0; k < 4; k++) {
+          sum += weights[k] * source.data[(y * source.width + clampX(base - 1 + k)) * 4 + channel]
+        }
+        wide[(y * width + x) * 4 + channel] = sum
+      }
+    }
+  }
+
+  const out = new Uint8ClampedArray(width * height * 4)
+  const yScale = source.height / height
+
+  for (let y = 0; y < height; y++) {
+    const at = (y + 0.5) * yScale - 0.5
+    const base = Math.floor(at)
+    const weights = cubicWeights(at - base)
+
+    for (let x = 0; x < width; x++) {
+      for (let channel = 0; channel < 4; channel++) {
+        let sum = 0
+        for (let k = 0; k < 4; k++) {
+          sum += weights[k] * wide[(clampY(base - 1 + k) * width + x) * 4 + channel]
+        }
+        out[(y * width + x) * 4 + channel] = sum
+      }
+    }
+  }
+
+  return new ImageData(out, width, height)
+}
+
 /** Draws the screenshot upscaled. OCR and the redaction check share this canvas. */
 function toCanvas(dataUrl, scale) {
   return new Promise((resolve, reject) => {
@@ -81,13 +150,24 @@ function toCanvas(dataUrl, scale) {
       const room = Math.sqrt(MAX_PIXELS / (img.naturalWidth * img.naturalHeight))
       const factor = Math.max(1, Math.min(scale, room))
 
+      const native = document.createElement('canvas')
+      native.width = img.naturalWidth
+      native.height = img.naturalHeight
+      const nativeCtx = native.getContext('2d', { willReadFrequently: true })
+      nativeCtx.drawImage(img, 0, 0)
+
       const canvas = document.createElement('canvas')
       canvas.width = Math.round(img.naturalWidth * factor)
       canvas.height = Math.round(img.naturalHeight * factor)
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      ctx.imageSmoothingEnabled = true
-      ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+      if (factor === 1) {
+        ctx.drawImage(img, 0, 0)
+      } else {
+        const source = nativeCtx.getImageData(0, 0, native.width, native.height)
+        ctx.putImageData(upscale(source, canvas.width, canvas.height), 0, 0)
+      }
+
       resolve(canvas)
     }
     img.onerror = () => reject(new Error('Could not decode that image.'))
@@ -260,11 +340,123 @@ function meanLuminance(ctx, canvas, x0, y0, x1, y1) {
   return total / (data.length / 4)
 }
 
+/**
+ * Finds a panel's column edges from the sheet's own fills, not from its text.
+ *
+ * Every OCR-derived route to the quantity columns needs a row where both
+ * numbers read cleanly, and on a small screenshot whole blocks yield none:
+ * the digits are the least legible thing on the sheet. The column fills are
+ * the most legible thing on it — flat bands of colour, metres wide in
+ * comparison — and they do not depend on the resampler or the language model.
+ *
+ * Returns the x of each edge, panel bounds included.
+ */
+function findFillEdges(ctx, canvas, panel, top, bottom) {
+  const left = Math.max(0, Math.round(panel.from))
+  const right = Math.min(canvas.width, Math.round(panel.to))
+  const y0 = Math.max(0, Math.round(top))
+  const height = Math.max(1, Math.min(canvas.height - y0, Math.round(bottom - top)))
+  if (right - left < 8) return []
+
+  const { data } = ctx.getImageData(left, y0, right - left, height)
+  const width = right - left
+
+  // A column's own colour, taken as the median down the panel rather than the
+  // mean. Text, borders and a redacted cell are all minorities of a column's
+  // pixels, so the median returns the fill itself and a glyph shifts it not at
+  // all; against a mean, every word in the leftmost cell reads as an edge.
+  const fills = new Float64Array(width * 3)
+  const hist = new Int32Array(3 * 256)
+
+  for (let x = 0; x < width; x++) {
+    hist.fill(0)
+    for (let y = 0; y < height; y++) {
+      const at = (y * width + x) * 4
+      hist[data[at]] += 1
+      hist[256 + data[at + 1]] += 1
+      hist[512 + data[at + 2]] += 1
+    }
+    for (let channel = 0; channel < 3; channel++) {
+      let seen = 0
+      let value = 0
+      for (let v = 0; v < 256; v++) {
+        seen += hist[channel * 256 + v]
+        if (seen * 2 >= height) { value = v; break }
+      }
+      fills[x * 3 + channel] = value
+    }
+  }
+
+  // Where that fill changes, a column ends. Compare across a short gap, not
+  // between neighbours: an antialiased border spreads its step over a few
+  // pixels, and adjacent differences split one edge into several.
+  const gap = Math.max(1, Math.round(width * 0.004))
+  const change = new Float64Array(width)
+  for (let x = gap; x < width - gap; x++) {
+    change[x] =
+      Math.abs(fills[(x + gap) * 3] - fills[(x - gap) * 3]) +
+      Math.abs(fills[(x + gap) * 3 + 1] - fills[(x - gap) * 3 + 1]) +
+      Math.abs(fills[(x + gap) * 3 + 2] - fills[(x - gap) * 3 + 2])
+  }
+
+  const CHANGE = 18
+  const spacing = Math.max(4, Math.round(width * 0.02))
+  const edges = []
+  for (let x = 1; x < width - 1; x++) {
+    if (change[x] < CHANGE) continue
+    if (change[x] < change[x - 1] || change[x] < change[x + 1]) continue
+    const previous = edges[edges.length - 1]
+    if (previous !== undefined && x - previous < spacing) {
+      if (change[x] > change[previous]) edges[edges.length - 1] = x
+      continue
+    }
+    edges.push(x)
+  }
+
+  return [0, ...edges, width].map(x => left + x)
+}
+
+/**
+ * The two quantity cells of a panel, read off its fill edges.
+ *
+ * The block's shape does the identifying: the item names sit in the leftmost
+ * cell, so the first two cells past them are the quantities and the price
+ * follows. Requiring a third cell past the names is what tells a genuine block
+ * from a run of stray edges.
+ *
+ * Two things stop that from being as simple as it sounds. A fill boundary is
+ * not the only thing that shifts a column's median — a heading's own shading
+ * subdivides a cell — so anything much narrower than a real column is
+ * discarded first. And `labelEdge` is a median rather than the widest name,
+ * because a row whose quantity read as text carries that text into its label
+ * and would put the edge inside the quantity column.
+ *
+ * Cells are returned as bounds rather than centres because the sheet
+ * right-aligns its numbers: a crop around the middle of a cell misses the
+ * digits sitting against its right edge.
+ */
+function columnsFromFills(edges, labelEdge, minWidth) {
+  if (edges.length < 4) return null
+
+  const cells = edges.slice(0, -1).map((from, i) => ({ from, to: edges[i + 1] }))
+  const candidates = cells.filter(cell => cell.to - cell.from >= minWidth && cell.from >= labelEdge)
+  if (candidates.length < 3) return null
+
+  const [full, half] = candidates
+  // Two quantity columns of a spreadsheet are near enough the same width. If
+  // these are not, the cells were misread and the digits are the better guide.
+  const widths = [full.to - full.from, half.to - half.from]
+  if (Math.min(...widths) < Math.max(...widths) * 0.6) return null
+
+  return { full, half, source: 'fills' }
+}
+
 /** Splits a row into its label text, quantity tokens and price. */
 function readRow(row) {
   const counts = []
   let price = null
   const label = []
+  const labelWords = []
 
   for (const word of row.words) {
     const asPrice = priceOf(word.text)
@@ -278,21 +470,43 @@ function readRow(row) {
       continue
     }
     // Anything before the first number belongs to the row label.
-    if (counts.length === 0 && price === null) label.push(word.text)
+    if (counts.length === 0 && price === null) {
+      label.push(word.text)
+      labelWords.push(word)
+    }
   }
 
-  return { label: label.join(' ').trim(), counts, price, y0: row.y0, y1: row.y1 }
+  return {
+    label: label.join(' ').trim(),
+    // Where the name ends, which is what separates the label cell from the
+    // quantity cells when the columns are taken from the fills.
+    labelRight: label.length > 0 ? Math.max(...labelWords.map(word => word.x1)) : null,
+    counts,
+    price,
+    y0: row.y0,
+    y1: row.y1,
+  }
 }
 
-/** Learns the two quantity column centres from the rows that read cleanly. */
+/**
+ * Learns the two quantity cells from the rows that read cleanly.
+ *
+ * Only the digits are visible here, and they are right-aligned, so the cell is
+ * taken as a span around them wide enough to hold a two-digit number.
+ */
 function findCountColumns(rows) {
   const pairs = rows.filter(row => row.counts.length === 2)
   if (pairs.length === 0) return null
 
   const centre = tokens => tokens.reduce((sum, t) => sum + (t.x0 + t.x1) / 2, 0) / tokens.length
+  const full = centre(pairs.map(p => p.counts[0]))
+  const half = centre(pairs.map(p => p.counts[1]))
+  const span = Math.abs(half - full) * 0.35
+
   return {
-    full: centre(pairs.map(p => p.counts[0])),
-    half: centre(pairs.map(p => p.counts[1])),
+    full: { from: full - span, to: full + span },
+    half: { from: half - span, to: half + span },
+    source: 'digits',
   }
 }
 
@@ -309,13 +523,28 @@ function findCountColumns(rows) {
  *
  * Returns a Map of panel index to `{ full, half, borrowedFrom }`.
  */
-function resolveColumns(blocks, panels) {
+function resolveColumns(blocks, panels, ctx, canvas) {
   const byPanel = new Map()
 
   panels.forEach((panel, index) => {
     const pooled = blocks.filter(block => block.panelIndex === index).flatMap(block => block.rows)
-    const columns = findCountColumns(pooled)
-    if (columns) byPanel.set(index, columns)
+
+    // The fills first: they are legible on a screenshot whose digits are not.
+    // Outside a browser there are no pixels to read, only the text.
+    const rights = pooled.map(row => row.labelRight).filter(right => right !== null).sort((a, b) => a - b)
+    if (ctx && rights.length > 0) {
+      const labelEdge = rights[Math.floor(rights.length / 2)]
+      const edges = findFillEdges(ctx, canvas, panel, 0, canvas.height)
+      const fromFills = columnsFromFills(edges, labelEdge, (panel.to - panel.from) * 0.05)
+      if (fromFills) {
+        byPanel.set(index, fromFills)
+        return
+      }
+    }
+
+    // A sheet drawn without fills still has its numbers to go on.
+    const fromDigits = findCountColumns(pooled)
+    if (fromDigits) byPanel.set(index, fromDigits)
   })
 
   const donorIndex = [...byPanel.keys()][0]
@@ -326,8 +555,9 @@ function resolveColumns(blocks, panels) {
     if (byPanel.has(index)) return
     const shift = panel.x0 - panels[donorIndex].x0
     byPanel.set(index, {
-      full: donor.full + shift,
-      half: donor.half + shift,
+      full: { from: donor.full.from + shift, to: donor.full.to + shift },
+      half: { from: donor.half.from + shift, to: donor.half.to + shift },
+      source: donor.source,
       borrowedFrom: panels[donorIndex].label,
     })
   })
@@ -386,13 +616,13 @@ async function rereadCount(worker, canvas, token) {
  * the full-page pass did not produce two clean numbers. A lone "5" is readily
  * misread as "H" or "[]" in prose mode; cropped and read as digits it is not.
  */
-async function readCell(worker, canvas, ctx, centre, span, y0, y1) {
+async function readCell(worker, canvas, ctx, cell, y0, y1) {
   // Pad by a share of the row height, not a fixed count, so the crop does not
   // swallow the neighbouring rows on a small screenshot.
   const pad = Math.max(2, Math.round((y1 - y0) * 0.2))
-  const left = Math.max(0, Math.round(centre - span))
+  const left = Math.max(0, Math.round(cell.from))
   const top = Math.max(0, Math.round(y0 - pad))
-  const width = Math.min(canvas.width - left, Math.round(span * 2))
+  const width = Math.min(canvas.width - left, Math.round(cell.to - cell.from))
   const height = Math.min(canvas.height - top, Math.round(y1 - y0 + pad * 2))
   if (width < 2 || height < 2) return { value: null, dark: false }
 
@@ -409,7 +639,10 @@ async function readCell(worker, canvas, ctx, centre, span, y0, y1) {
 // work above it is not. Exposed for the harness in scripts/, not for app code.
 export const internals = {
   collectWords,
+  columnsFromFills,
   dropTallBlobs,
+  findFillEdges,
+  upscale,
   findCountColumns,
   findDayBands,
   findPanels,
@@ -475,12 +708,12 @@ export async function extractOrdersLocally(dataUrl, { catalogue = [], onProgress
       })
     }
 
-    const columnsByPanel = resolveColumns(blocks, panels)
+    const columnsByPanel = resolveColumns(blocks, panels, ctx, canvas)
     for (const [index, columns] of columnsByPanel) {
       if (!columns.borrowedFrom) continue
       notes.push(
-        `${panels[index].label}: no quantity in that block read clearly enough to place its columns, ` +
-        `so they were taken from the ${columns.borrowedFrom} block. Check those numbers.`,
+        `${panels[index].label}: its own quantity columns could not be placed, so they were ` +
+        `taken from the ${columns.borrowedFrom} block. Check those numbers.`,
       )
     }
 
@@ -522,25 +755,49 @@ export async function extractOrdersLocally(dataUrl, { catalogue = [], onProgress
             // only for the cell that is still missing: re-reading a column
             // that was already correct is how a good 0 becomes a bad 2.
             const found = { full: null, half: null }
+            const middle = cell => (cell.from + cell.to) / 2
             for (const token of row.counts) {
               const centre = (token.x0 + token.x1) / 2
-              const key = Math.abs(centre - columns.full) <= Math.abs(centre - columns.half) ? 'full' : 'half'
+              const inside = ['full', 'half'].find(
+                key => centre >= columns[key].from && centre < columns[key].to,
+              )
+              const key = inside
+                ?? (Math.abs(centre - middle(columns.full)) <= Math.abs(centre - middle(columns.half))
+                  ? 'full'
+                  : 'half')
               if (found[key] === null) found[key] = token.value
             }
 
-            const span = Math.abs(columns.half - columns.full) * 0.35
+            const missed = []
             for (const key of ['full', 'half']) {
               if (found[key] !== null) continue
-              const cell = await readCell(worker, canvas, ctx, columns[key], span, row.y0, row.y1)
+              const cell = await readCell(worker, canvas, ctx, columns[key], row.y0, row.y1)
               if (cell.dark) {
                 unreadable = true
                 found[key] = 0
               } else if (cell.value === null) {
-                notes.push(`${where}: the ${key} quantity could not be read and was treated as 0.`)
+                missed.push(key)
                 found[key] = 0
               } else {
                 found[key] = cell.value
               }
+            }
+
+            // The sheet writes each half count as twice its full count, so a
+            // half that read cleanly recovers a full that did not. It is the
+            // same arithmetic the app applies in the other direction, and it
+            // beats leaving a real order at 0.
+            if (missed.includes('full') && !missed.includes('half') && found.half > 0 && found.half % 2 === 0) {
+              found.full = found.half / 2
+              notes.push(
+                `${where}: the full quantity could not be read, so ${found.full} was taken from ` +
+                `its ${found.half} halves.`,
+              )
+              missed.splice(missed.indexOf('full'), 1)
+            }
+
+            for (const key of missed) {
+              notes.push(`${where}: the ${key} quantity could not be read and was treated as 0.`)
             }
 
             full = found.full

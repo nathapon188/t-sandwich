@@ -53,7 +53,9 @@ for (const band of bands) {
     blocks.push({ band, panel, panelIndex, rows: groupRows(cells).map(readRow) })
   })
 }
-const columnsByPanel = resolveColumns(blocks, panels)
+// No canvas outside the browser, so the fill-based columns are unavailable
+// here and this falls back to placing them from the digits.
+const columnsByPanel = resolveColumns(blocks, panels, null, null)
 
 for (const band of bands) {
   for (const { panel, panelIndex, rows: parsed } of blocks.filter(block => block.band === band)) {
@@ -71,16 +73,15 @@ for (const band of bands) {
       let recovered = ''
 
       if (row.counts.length !== 2 && columns) {
-        const span = Math.abs(columns.half - columns.full) * 0.35
         const pad = Math.max(2, Math.round((row.y1 - row.y0) * 0.2))
-        const read = async centre => {
+        const read = async cell => {
           const { data } = await digits.recognize(
             IMAGE,
             {
               rectangle: {
-                left: Math.max(0, Math.round(centre - span)),
+                left: Math.max(0, Math.round(cell.from)),
                 top: Math.max(0, Math.round(row.y0 - pad)),
-                width: Math.round(span * 2),
+                width: Math.round(cell.to - cell.from),
                 height: Math.round(row.y1 - row.y0 + pad * 2),
               },
             },
@@ -92,9 +93,12 @@ for (const band of bands) {
 
         // Keep whatever read cleanly; only go back to the pixels for the gap.
         const found = { full: null, half: null }
+        const middle = cell => (cell.from + cell.to) / 2
         for (const token of row.counts) {
           const centre = (token.x0 + token.x1) / 2
-          const key = Math.abs(centre - columns.full) <= Math.abs(centre - columns.half) ? 'full' : 'half'
+          const inside = ['full', 'half'].find(k => centre >= columns[k].from && centre < columns[k].to)
+          const key = inside
+            ?? (Math.abs(centre - middle(columns.full)) <= Math.abs(centre - middle(columns.half)) ? 'full' : 'half')
           if (found[key] === null) found[key] = token.value
         }
         const filled = []
