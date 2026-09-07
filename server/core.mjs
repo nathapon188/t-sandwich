@@ -4,6 +4,10 @@ export const CURRENT_KEY = 'current'
 export const SNAPSHOT_PREFIX = 'snapshots/'
 export const MAX_SNAPSHOTS = 40
 
+// See renameMorningSlot: the morning collection time changed after go-live.
+const MORNING_WAS = '08:00'
+const MORNING_IS = '07:45'
+
 /** Constant-time key comparison. */
 export function keysMatch(supplied, expected) {
   const a = Buffer.from(String(supplied ?? ''))
@@ -66,9 +70,30 @@ function normalise(doc) {
   }
 }
 
+/**
+ * The morning collection moved from 8:00am to 7:45am. Slots are not editable
+ * in the app, so a document saved before the change still carries the old id
+ * and would render an 8:00am card with every morning order under it. Renaming
+ * on read leaves the store alone; the next save writes the new id through.
+ */
+function renameMorningSlot(doc) {
+  const stale = doc.slots?.some(slot => slot.id === MORNING_WAS)
+  if (!stale || doc.slots.some(slot => slot.id === MORNING_IS)) return doc
+
+  const rekey = day => Object.fromEntries(
+    Object.entries(day ?? {}).map(([slotId, qty]) => [slotId === MORNING_WAS ? MORNING_IS : slotId, qty]),
+  )
+
+  return {
+    ...doc,
+    slots: doc.slots.map(slot => (slot.id === MORNING_WAS ? { id: MORNING_IS, label: '7:45am Collection' } : slot)),
+    orders: Object.fromEntries(Object.entries(doc.orders ?? {}).map(([key, day]) => [key, rekey(day)])),
+  }
+}
+
 export async function loadDoc(store, seed) {
   const stored = await store.getJSON(CURRENT_KEY)
-  if (stored) return stored
+  if (stored) return renameMorningSlot(stored)
   // Nothing saved yet: serve the seed committed in the repo.
   return { ...normalise(seed), updatedAt: null, savedBy: null }
 }

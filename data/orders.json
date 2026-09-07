@@ -9,20 +9,20 @@
     { "id": "gfveg", "name": "Gluten-free Vegetarian", "price": 7.5, "gf": true }
   ],
   "slots": [
-    { "id": "08:00", "label": "8:00am Collection" },
+    { "id": "07:45", "label": "7:45am Collection" },
     { "id": "10:30", "label": "10:30am Collection" }
   ],
   "orders": {
     "2026-08-17": {
-      "08:00": { "ham": 4, "chicken": 6, "veg": 3, "gfchicken": 1 },
+      "07:45": { "ham": 4, "chicken": 6, "veg": 3, "gfchicken": 1 },
       "10:30": { "ham": 5, "chicken": 7 }
     },
     "2026-08-18": {
-      "08:00": { "fruit": 1, "ham": 5, "chicken": 7, "veg": 3 },
+      "07:45": { "fruit": 1, "ham": 5, "chicken": 7, "veg": 3 },
       "10:30": { "ham": 5, "chicken": 7 }
     },
     "2026-08-19": {
-      "08:00": { "ham": 5, "chicken": 7, "veg": 3, "gfchicken": 1 },
+      "07:45": { "ham": 5, "chicken": 7, "veg": 3, "gfchicken": 1 },
       "10:30": { "ham": 5, "chicken": 6, "veg": 1 }
     }
   }

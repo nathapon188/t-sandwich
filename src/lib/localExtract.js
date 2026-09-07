@@ -134,15 +134,22 @@ function groupRows(words) {
  * starts at the leftmost occurrence of its own time header and runs to the
  * next panel's.
  */
-function findPanels(words, width) {
+function findPanels(rows, width) {
   const leftmost = new Map()
 
-  for (const word of words) {
-    const minutes = timeValue(word.text)
-    if (minutes === null) continue
-    const found = leftmost.get(minutes)
-    if (!found || word.x0 < found.x0) {
-      leftmost.set(minutes, { label: TIME_TOKEN.exec(word.text)[0].replace(/\s+/g, ''), x0: word.x0 })
+  for (const row of rows) {
+    // A "8:00am Price total" column header carries a time of its own, and the
+    // sheet does not keep it in step with the collection time above it, so a
+    // price row would otherwise add a panel and split the day's columns.
+    if (row.words.some(word => normalise(word.text) === 'price')) continue
+
+    for (const word of row.words) {
+      const minutes = timeValue(word.text)
+      if (minutes === null) continue
+      const found = leftmost.get(minutes)
+      if (!found || word.x0 < found.x0) {
+        leftmost.set(minutes, { label: TIME_TOKEN.exec(word.text)[0].replace(/\s+/g, ''), x0: word.x0 })
+      }
     }
   }
 
@@ -369,11 +376,11 @@ export async function extractOrdersLocally(dataUrl, { catalogue = [], onProgress
     if (words.length === 0) throw new Error('No text could be read from that image.')
 
     const allRows = groupRows(words)
-    const panels = findPanels(words, canvas.width)
+    const panels = findPanels(allRows, canvas.width)
     const bands = findDayBands(allRows, canvas.height)
 
     if (panels.length === 0) {
-      throw new Error('No collection time heading was found. Include the "8:00am Collection time" row in the screenshot.')
+      throw new Error('No collection time heading was found. Include the "7:45am Collection time" row in the screenshot.')
     }
     if (bands.length === 0) {
       throw new Error('No weekday heading was found. Include the "Thursday Order" style row in the screenshot.')

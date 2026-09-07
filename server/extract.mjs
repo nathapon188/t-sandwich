@@ -65,7 +65,7 @@ Rules:
 - Quantities are whole numbers. If a cell is blank, treat it as 0.
 - If a cell is redacted, blacked out, obscured or genuinely unreadable, set that quantity to 0 and set "unreadable" to true for that line. Never guess a hidden number.
 - "full" is the Quantity Full Sandwich column and "half" is the Quantity half sandwich column. "price" is the row's price total for that collection time.
-- "label" is the collection time heading exactly as printed, for example "8:00am" or "10:30am".
+- "label" is the collection time heading exactly as printed, for example "7:45am" or "10:30am".
 - Do not include the day total row as a line item.
 - Put anything ambiguous, any redacted cell, and any item name that does not match the known list into "notes". Keep notes to a few short sentences.`
 

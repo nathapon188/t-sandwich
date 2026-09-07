@@ -35,7 +35,7 @@ await digits.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE, tessedit_ch
 
 const words = collectWords(page)
 const rows = groupRows(words)
-const panels = findPanels(words, Number.MAX_SAFE_INTEGER)
+const panels = findPanels(rows, Number.MAX_SAFE_INTEGER)
 const bands = findDayBands(rows, Number.MAX_SAFE_INTEGER)
 
 console.log(`words : ${words.length}`)
