@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { internals } from '../src/lib/localExtract.js'
 
-const { collectWords, findCountColumns, findDayBands, findPanels, groupRows, normalise, readRow, snapName } = internals
+const { collectWords, dropTallBlobs, findDayBands, findPanels, groupRows, normalise, readRow, resolveColumns, snapName } = internals
 
 const SEED = fileURLToPath(new URL('../data/orders.json', import.meta.url))
 const IMAGE = process.argv[2]
@@ -33,7 +33,7 @@ await reader.terminate()
 const digits = await createWorker('eng', 1)
 await digits.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE, tessedit_char_whitelist: '0123456789' })
 
-const words = collectWords(page)
+const words = dropTallBlobs(collectWords(page))
 const rows = groupRows(words)
 const panels = findPanels(rows, Number.MAX_SAFE_INTEGER)
 const bands = findDayBands(rows, Number.MAX_SAFE_INTEGER)
@@ -42,15 +42,25 @@ console.log(`words : ${words.length}`)
 console.log('panels:', panels.map(p => `${p.label} [${Math.round(p.from)}..]`).join('  '))
 console.log('bands :', bands.map(b => `${b.weekday} [${Math.round(b.from)}..${Math.round(b.to)}]`).join('  '))
 
+// Parse every weekday-by-panel block first: the quantity columns are settled
+// across the whole sheet, as they are in the app.
+const blocks = []
 for (const band of bands) {
-  for (const panel of panels) {
+  panels.forEach((panel, panelIndex) => {
     const cells = words.filter(
       w => w.y0 >= band.from && w.y1 <= band.to && (w.x0 + w.x1) / 2 >= panel.from && (w.x0 + w.x1) / 2 < panel.to,
     )
-    const parsed = groupRows(cells).map(readRow)
-    const columns = findCountColumns(parsed)
+    blocks.push({ band, panel, panelIndex, rows: groupRows(cells).map(readRow) })
+  })
+}
+const columnsByPanel = resolveColumns(blocks, panels)
+
+for (const band of bands) {
+  for (const { panel, panelIndex, rows: parsed } of blocks.filter(block => block.band === band)) {
+    const columns = columnsByPanel.get(panelIndex) ?? null
 
     console.log(`\n== ${band.weekday} / ${panel.label}`)
+    if (columns?.borrowedFrom) console.log(`   columns borrowed from ${columns.borrowedFrom}`)
 
     for (const row of parsed) {
       const item = snapName(row.label, catalogue)

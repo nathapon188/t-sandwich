@@ -13,10 +13,15 @@ import { PSM, createWorker } from 'tesseract.js'
  * mapExtraction consumes either without knowing which produced it.
  */
 
-// Spreadsheet digits sit around 10px tall at native size, under what Tesseract
-// reads reliably. Doubling helps; tripling measurably hurts, recovering fewer
-// words than no upscale at all.
-const SCALE = 2
+// Spreadsheet digits sit around 10px tall at native size, well under what
+// Tesseract reads reliably, and a lone small digit is the hardest case of all.
+// Measured on a 1355x335 sheet: pixel duplication at 2x recovered 2 of ~56
+// quantities and 1 price, and at 4x still only 2; smooth interpolation at 4x
+// recovered 17 quantities and 30 prices. Hard-edged strokes were the reason to
+// duplicate pixels, but at this size the interpolated glyph is the readable
+// one. MAX_PIXELS keeps a full-page screenshot inside what a canvas will hold.
+const SCALE = 4
+const MAX_PIXELS = 40e6
 const DARK_CELL = 60      // mean luminance below this reads as a blacked-out cell
 const LOW_CONFIDENCE = 70 // re-read anything Tesseract is less sure of than this
 
@@ -71,13 +76,17 @@ function toCanvas(dataUrl, scale) {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
+      // A big screenshot cannot take the full upscale without exceeding what
+      // the browser will allocate, so give it whatever multiple still fits.
+      const room = Math.sqrt(MAX_PIXELS / (img.naturalWidth * img.naturalHeight))
+      const factor = Math.max(1, Math.min(scale, room))
+
       const canvas = document.createElement('canvas')
-      canvas.width = Math.round(img.naturalWidth * scale)
-      canvas.height = Math.round(img.naturalHeight * scale)
+      canvas.width = Math.round(img.naturalWidth * factor)
+      canvas.height = Math.round(img.naturalHeight * factor)
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      // Screenshot text is hard-edged. Interpolating it softens the strokes
-      // and costs recognised words, so scale by pixel duplication instead.
-      ctx.imageSmoothingEnabled = false
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       resolve(canvas)
     }
@@ -100,6 +109,23 @@ function collectWords(page) {
     }
   }
   return words
+}
+
+/**
+ * Drops "words" that are really several rows read as one box.
+ *
+ * A column of small digits is the case Tesseract handles worst: rather than
+ * fail per cell it sometimes returns the whole column as a single tall token
+ * of nonsense ("cooohm", "20000"). The text is useless either way, but the box
+ * spans every row it covered, so in row grouping it bridges those rows into
+ * one and an item disappears from the sheet entirely. Nothing that tall is a
+ * quantity, an item name or a heading, so drop it before grouping.
+ */
+function dropTallBlobs(words) {
+  if (words.length === 0) return words
+  const heights = words.map(word => word.y1 - word.y0).sort((a, b) => a - b)
+  const median = heights[Math.floor(heights.length / 2)]
+  return words.filter(word => word.y1 - word.y0 <= median * 2)
 }
 
 /** Groups words into rows by vertical overlap, each sorted left to right. */
@@ -158,6 +184,9 @@ function findPanels(rows, width) {
   const panels = [...leftmost.values()].sort((a, b) => a.x0 - b.x0)
   return panels.map((panel, i) => ({
     label: panel.label,
+    // The heading's own left edge, kept because `from` is widened to 0 for the
+    // first panel and so cannot be used to line the panels up with each other.
+    x0: panel.x0,
     from: i === 0 ? 0 : panel.x0,
     to: i === panels.length - 1 ? width : panels[i + 1].x0,
   }))
@@ -267,6 +296,45 @@ function findCountColumns(rows) {
   }
 }
 
+/**
+ * Settles the quantity columns for every panel before any cell is read.
+ *
+ * findCountColumns only sees the rows it is given, and one weekday block of a
+ * small screenshot often yields no row with two clean numbers at all. The
+ * sheet is a single grid, though, so a panel's columns sit at the same x in
+ * every band: pooling every band's rows gives each panel far more to learn
+ * from. Where a panel still comes up empty, the blocks are copies of one
+ * another, so another panel's columns carry across on the gap between the two
+ * headings.
+ *
+ * Returns a Map of panel index to `{ full, half, borrowedFrom }`.
+ */
+function resolveColumns(blocks, panels) {
+  const byPanel = new Map()
+
+  panels.forEach((panel, index) => {
+    const pooled = blocks.filter(block => block.panelIndex === index).flatMap(block => block.rows)
+    const columns = findCountColumns(pooled)
+    if (columns) byPanel.set(index, columns)
+  })
+
+  const donorIndex = [...byPanel.keys()][0]
+  if (donorIndex === undefined) return byPanel
+
+  const donor = byPanel.get(donorIndex)
+  panels.forEach((panel, index) => {
+    if (byPanel.has(index)) return
+    const shift = panel.x0 - panels[donorIndex].x0
+    byPanel.set(index, {
+      full: donor.full + shift,
+      half: donor.half + shift,
+      borrowedFrom: panels[donorIndex].label,
+    })
+  })
+
+  return byPanel
+}
+
 /** Levenshtein distance, used only on short normalised item names. */
 function distance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -341,12 +409,14 @@ async function readCell(worker, canvas, ctx, centre, span, y0, y1) {
 // work above it is not. Exposed for the harness in scripts/, not for app code.
 export const internals = {
   collectWords,
+  dropTallBlobs,
   findCountColumns,
   findDayBands,
   findPanels,
   groupRows,
   normalise,
   readRow,
+  resolveColumns,
   snapName,
 }
 
@@ -372,7 +442,7 @@ export async function extractOrdersLocally(dataUrl, { catalogue = [], onProgress
     // are what the whole layout pass depends on.
     const page = (await worker.recognize(canvas, {}, { blocks: true })).data
 
-    const words = collectWords(page)
+    const words = dropTallBlobs(collectWords(page))
     if (words.length === 0) throw new Error('No text could be read from that image.')
 
     const allRows = groupRows(words)
@@ -392,15 +462,33 @@ export async function extractOrdersLocally(dataUrl, { catalogue = [], onProgress
       tessedit_char_whitelist: '0123456789',
     })
 
+    // Split the sheet into weekday-by-panel blocks first: the quantity columns
+    // are settled across the whole sheet, so every block has to be parsed
+    // before any cell is read.
+    const blocks = []
     for (const band of bands) {
-      const slots = []
-
-      for (const panel of panels) {
+      panels.forEach((panel, panelIndex) => {
         const cells = words.filter(
           w => w.y0 >= band.from && w.y1 <= band.to && (w.x0 + w.x1) / 2 >= panel.from && (w.x0 + w.x1) / 2 < panel.to,
         )
-        const rows = groupRows(cells).map(readRow)
-        const columns = findCountColumns(rows)
+        blocks.push({ band, panel, panelIndex, rows: groupRows(cells).map(readRow) })
+      })
+    }
+
+    const columnsByPanel = resolveColumns(blocks, panels)
+    for (const [index, columns] of columnsByPanel) {
+      if (!columns.borrowedFrom) continue
+      notes.push(
+        `${panels[index].label}: no quantity in that block read clearly enough to place its columns, ` +
+        `so they were taken from the ${columns.borrowedFrom} block. Check those numbers.`,
+      )
+    }
+
+    for (const band of bands) {
+      const slots = []
+
+      for (const { panel, panelIndex, rows } of blocks.filter(block => block.band === band)) {
+        const columns = columnsByPanel.get(panelIndex) ?? null
         const lines = []
 
         for (const row of rows) {
